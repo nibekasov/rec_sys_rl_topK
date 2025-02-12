@@ -1,10 +1,13 @@
 import pandas as pd
 import pickle
+import torch
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data._utils.collate import default_collate
 from sklearn.model_selection import train_test_split
 import os
 
-from data_utils import batch_tensor_embeddings, make_items_tensor, batch_contstate_discaction
+from utils.data_utils import make_items_tensor, batch_contstate_discaction
 
 class UserDataset(Dataset):
 
@@ -69,6 +72,8 @@ class FrameEnv:
         self.rating_path = rating_path
         self.frame_size = frame_size
         self.num_items =num_items
+        self.test_size = test_size
+
 
         self.train_user_dataset = None
         self.test_user_dataset = None
@@ -97,15 +102,17 @@ class FrameEnv:
     def process_env(self):
         movie_embeddings_key_dict = pickle.load(open(self.embedding_path, "rb"))
         self.embeddings, self.key_to_id, self.id_to_key = make_items_tensor(movie_embeddings_key_dict)
-        ratings = pd.read_csv(self.rating_path)
+        ratings = pd.read_csv(self.rating_path, names=["userId", "movieId", "rating", "timestamp"])
 
         ratings["movieId"] = ratings["movieId"].map(self.key_to_id)
         users = ratings[["userId", "movieId"]].groupby(["userId"]).size()
-        users = users[users > frame_size].sort_values(ascending=False).index
-        ratings = ratings.sort_values(by="timestamp")
-                         .set_index("userId")
-                         .drop("timestamp", axis=1)
-                         .groupby("userId")
+        users = users[users > self.frame_size].sort_values(ascending=False).index
+        ratings = (
+            ratings.sort_values(by="timestamp")
+            .set_index("userId")
+            .drop("timestamp", axis=1)
+            .groupby("userId")
+        )
         user_dict = {}
 
         def helper(x):
@@ -116,20 +123,42 @@ class FrameEnv:
 
         ratings.apply(helper)
 
-        train_users, test_users = train_test_split(users, test_size=test_size)
+        train_users, test_users = train_test_split(users, test_size=self.test_size)
         train_users = sort_users_itemwise(user_dict, train_users)[2:]
         test_users = sort_users_itemwise(user_dict, test_users)
         self.train_user_dataset = UserDataset(train_users, user_dict)
         self.test_user_dataset = UserDataset(test_users, user_dict)
 
-    def prepare_batch_wrapper(self, x):
-        batch = batch_contstate_discaction(
-            x,
+    def prepare_batch_wrapper(self, batch):
+
+        # ✅ Достаем нужные данные из списка batch
+        items_t = [torch.tensor(b["items"], dtype=torch.float32) for b in batch]
+        ratings_t = [torch.tensor(b["rates"], dtype=torch.float32) for b in batch]
+        sizes_t = torch.tensor([b["sizes"] for b in batch], dtype=torch.int64)
+        users_t = torch.tensor([b["users"] for b in batch], dtype=torch.int64)
+
+        items_t = [torch.nan_to_num(i, nan=0) for i in items_t]
+
+
+        items_t = pad_sequence(items_t, batch_first=True, padding_value=0)
+        ratings_t = pad_sequence(ratings_t, batch_first=True, padding_value=0)
+
+        # ✅ Оборачиваем в словарь
+        batch_dict = {
+            "items": items_t,
+            "ratings": ratings_t,
+            "sizes": sizes_t,
+            "users": users_t,
+        }
+
+        # ✅ Теперь передаем правильный формат в batch_contstate_discaction
+        return batch_contstate_discaction(
+            batch_dict,
             self.embeddings,
-            frame_size=self.frame_size
+            frame_size=self.frame_size,
             num_items=self.num_items
         )
-        return batch
+
 
     def train_batch(self):
         """ Get batch for training """
