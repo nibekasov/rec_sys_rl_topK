@@ -3,6 +3,9 @@ import torch
 from recnn import utils
 from recnn import data
 import gc
+import wandb
+
+import utils.recnn_utils as new_utils 
 
 
 def temporal_difference(reward, done, gamma, target):
@@ -115,19 +118,24 @@ def reinforce_update(
     step=-1,
 ):
 
-    # Due to its mechanics, reinforce doesn't support testing!
     learn = True
 
-    state, action, reward, next_state, done = data.get_base_batch(batch)
+    state, action, reward, next_state, done = data.get_base_batch(batch, device=torch.device("cpu"))
+    
+    max_state_size = 1024
+    if state.shape[1] > max_state_size:
+        state = state[:, :max_state_size] 
 
-    predicted_probs = nets["policy_net"].select_action(
-        state=state, action=action, K=params["K"], learn=learn, writer=writer, step=step
-    )
-    writer.add_histogram("predicted_probs_std", predicted_probs.std(), step)
-    writer.add_histogram("predicted_probs_mean", predicted_probs.mean(), step)
+    predicted_probs = nets["policy_net"].select_action(state=state, action=action, K=params["K"], learn=learn, writer=writer, step=step)
+
+    # Логируем распределение вероятностей
+    writer.log({"predicted_probs_std": wandb.Histogram(predicted_probs.std().cpu().detach().numpy())}, step=step)
+    writer.log({"predicted_probs_mean": wandb.Histogram(predicted_probs.mean().cpu().detach().numpy())}, step=step)
+
     mx = predicted_probs.max(dim=1).values
-    writer.add_histogram("predicted_probs_max_mean", mx.mean(), step)
-    writer.add_histogram("predicted_probs_max_std", mx.std(), step)
+    writer.log({"predicted_probs_max_mean": wandb.Histogram(mx.mean().cpu().detach().numpy())}, step=step)
+    writer.log({"predicted_probs_max_std": wandb.Histogram(mx.std().cpu().detach().numpy())}, step=step)
+
     reward = nets["value_net"](state, predicted_probs).detach()
     nets["policy_net"].rewards.append(reward.mean())
 
@@ -155,6 +163,6 @@ def reinforce_update(
             "step": step,
         }
 
-        utils.write_losses(writer, losses, kind="train" if learn else "test")
+        new_utils.write_losses(writer, losses, kind="train" if learn else "test")
 
         return losses
