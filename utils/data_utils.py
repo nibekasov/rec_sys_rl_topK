@@ -17,17 +17,13 @@ def make_items_tensor(items_embeddings_key_dict):
 
 
 def batch_contstate_discaction(batch, item_embeddings_tensor, frame_size, num_items):
-
-    """
-    Embed Batch: continuous state discrete action
-    """
-
     items_t, ratings_t, sizes_t, users_t = batch["items"], batch["ratings"], batch["sizes"], batch["users"]
     items_emb = item_embeddings_tensor[items_t.long()]
     b_size = ratings_t.size(0)
 
-    items = items_emb[:, :-1, :].view(b_size, -1)
-    next_items = items_emb[:, 1:, :].view(b_size, -1)
+    items = items_emb[:, :frame_size, :].reshape(b_size, -1)
+    next_items = items_emb[:, :frame_size, :].reshape(b_size, -1)
+
     ratings = ratings_t[:, :-1]
     next_ratings = ratings_t[:, 1:]
 
@@ -36,11 +32,13 @@ def batch_contstate_discaction(batch, item_embeddings_tensor, frame_size, num_it
     action = items_t[:, -1]
     reward = ratings_t[:, -1]
 
-    done = torch.zeros(b_size)
-    done[torch.cumsum(sizes_t - frame_size, dim=0) - 1] = 1
+    done = torch.zeros(b_size, dtype=torch.float32)
+    
+    valid_indices = torch.clamp(torch.cumsum(sizes_t - frame_size, dim=0) - 1, min=0, max=b_size - 1)
+    done[valid_indices] = 1
 
     one_hot_action = torch.zeros(b_size, num_items)
-    one_hot_action.scatter_(1, action.view(-1, 1), 1)
+    one_hot_action.scatter_(1, action.long().view(-1, 1), 1)
 
     batch = {
         "state": state,
@@ -50,4 +48,9 @@ def batch_contstate_discaction(batch, item_embeddings_tensor, frame_size, num_it
         "done": done,
         "meta": {"users": users_t, "sizes": sizes_t},
     }
+
+    # Гарантируем фиксированную длину
+    state = state[:, :1024] if state.shape[1] > 1024 else state
+    next_state = next_state[:, :1024] if next_state.shape[1] > 1024 else next_state
+
     return batch
