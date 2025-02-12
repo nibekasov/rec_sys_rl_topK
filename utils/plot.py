@@ -62,6 +62,13 @@ class Plotter:
         for key, val in losses.items():
             self.log_loss(key, val, test)
 
+    def get_current_loss(self):
+        """
+        Метод для получения текущих потерь.
+        Вернем потери для тренировки или тестирования.
+        """
+        return self.loss["train"] if self.loss.get("train") else self.loss.get("test")
+
     @staticmethod
     def kde_reconstruction_error(
         ad, gen_actions, true_actions, device=torch.device("cpu")
