@@ -56,6 +56,13 @@ reinforce-recsys/
 ├── requirements.txt        # Dependencies
 └── README.md               # Project documentation
 ```
+## Logs of training process
+
+https://wandb.ai/nibekasov-itmo-university/reinforce-topK/runs/2jmlmsqo?nw=nwusernibekasov
+
+## ToDO: make better implementation in RecSys
+## Refactor code
+## ToDo: Refactor usage of unnesesary libs
 
 ## Contribution
 Feel free to open issues and pull requests if you want to improve this repository!
